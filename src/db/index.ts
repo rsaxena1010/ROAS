@@ -17,11 +17,30 @@ import * as schema from "./schema";
  * Postgres remains the migration path if this outgrows libSQL; see docs/architecture.md.
  */
 
+/**
+ * Accept the Turso integration's variable names as well as our own.
+ *
+ * Vercel's Turso marketplace integration provisions `TURSO_DATABASE_URL` and
+ * `TURSO_AUTH_TOKEN`. Reading only `DATABASE_URL`/`DATABASE_AUTH_TOKEN` meant a correctly
+ * connected database looked entirely absent: the app fell back to the local file default and
+ * failed the serverless guard, which points at a missing variable that was in fact already
+ * there under another name. Prefer the explicit names, fall back to the integration's.
+ */
+function firstEnv(...names: string[]): string | undefined {
+  for (const name of names) {
+    // An env var set to an empty string is a misconfiguration, not a choice.
+    const value = process.env[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
 function resolveUrl(): string {
-  // An env var set to an empty string is a misconfiguration, not a choice — treat it as unset
-  // rather than handing `createClient` a blank URL.
-  const configured = process.env.DATABASE_URL?.trim();
-  return configured || "file:./.data/roas.db";
+  return firstEnv("DATABASE_URL", "TURSO_DATABASE_URL") || "file:./.data/roas.db";
+}
+
+export function resolveAuthToken(): string | undefined {
+  return firstEnv("DATABASE_AUTH_TOKEN", "TURSO_AUTH_TOKEN");
 }
 
 const globalForDb = globalThis as unknown as {
@@ -59,10 +78,10 @@ function assertDeployableUrl(url: string): void {
   if (!url.startsWith("file:") || url.startsWith("file::memory:")) return;
 
   throw new Error(
-    `DATABASE_URL is "${url}", a local SQLite file, but this is running on ${host}. ` +
-      "A serverless filesystem is read-only and ephemeral, so a file database cannot work there. " +
-      "Point DATABASE_URL at a hosted libSQL database (libsql://<db>.turso.io) and set " +
-      "DATABASE_AUTH_TOKEN. See docs/deploy.md.",
+    `No database URL is configured, so this fell back to "${url}", a local SQLite file — ` +
+      `but it is running on ${host}, whose filesystem is read-only and ephemeral. ` +
+      "Set DATABASE_URL (or TURSO_DATABASE_URL, which Vercel's Turso integration provisions) " +
+      "to a hosted libSQL database, plus the matching auth token. See docs/deploy.md.",
   );
 }
 
@@ -75,15 +94,16 @@ function createDb() {
   }
   // Turso rejects unauthenticated connections; catch the omission here rather than as an
   // opaque 401 from the first query.
-  if (url.startsWith("libsql://") && !process.env.DATABASE_AUTH_TOKEN) {
+  if (url.startsWith("libsql://") && !resolveAuthToken()) {
     throw new Error(
-      `DATABASE_URL is a remote libSQL URL but DATABASE_AUTH_TOKEN is not set. ` +
-        "Add it to the deployment's environment variables. See docs/deploy.md.",
+      "DATABASE_URL is a remote libSQL URL but no auth token is set. Set DATABASE_AUTH_TOKEN " +
+        "(or TURSO_AUTH_TOKEN, which Vercel's Turso integration provisions) in the " +
+        "deployment's environment variables. See docs/deploy.md.",
     );
   }
   const client = createClient({
     url,
-    authToken: process.env.DATABASE_AUTH_TOKEN,
+    authToken: resolveAuthToken(),
   });
   return drizzle(client, { schema });
 }

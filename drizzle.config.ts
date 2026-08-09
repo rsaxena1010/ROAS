@@ -9,7 +9,13 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "turso",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "file:./.data/roas.db",
-    authToken: process.env.DATABASE_AUTH_TOKEN,
+    // Also accept the names Vercel's Turso integration provisions, so `db:push` works against
+    // a pulled production environment without renaming anything.
+    url:
+      process.env.DATABASE_URL?.trim() ||
+      process.env.TURSO_DATABASE_URL?.trim() ||
+      "file:./.data/roas.db",
+    authToken:
+      process.env.DATABASE_AUTH_TOKEN?.trim() || process.env.TURSO_AUTH_TOKEN?.trim(),
   },
 });

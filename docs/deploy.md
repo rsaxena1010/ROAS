@@ -72,17 +72,29 @@ Leave the per-platform credentials unset unless you are switching an account to 
 
 `drizzle.config.ts` already reads both variables, so this works against Turso unchanged:
 
+Read the values out of the environment rather than typing them into your shell, so they never
+land in shell history, a file, or a commit:
+
 ```bash
-DATABASE_URL='libsql://roas-<org>.turso.io' \
-DATABASE_AUTH_TOKEN='<token>' \
+export $(vercel env pull --environment=production --yes >/dev/null && grep -E '^(TURSO|DATABASE)_' .env.production.local | xargs)
+npm run db:push
+```
+
+Or, if you have the Turso CLI authenticated, let it supply both:
+
+```bash
+DATABASE_URL="$(turso db show <db> --url)" \
+DATABASE_AUTH_TOKEN="$(turso db tokens create <db>)" \
 npm run db:push
 ```
 
 ### 4. Seed it
 
+Same rule — substitute, never paste:
+
 ```bash
-TURSO_AUTH_TOKEN="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODYyNjMwOTQsImlkIjoiMDE5ZmU1OTMtYzIwMS03YWJjLWIxZDYtNzY4NjlkZTFmOTdjIiwia2lkIjoiTmhQZHl0Z3AwN3RyUzZfVDlNOGtldmV4TVlqYUY0aWhSVTBYbFRtUWdZZyIsInJpZCI6IjEyOTEyYjZlLTQyYWEtNDhkZC04OTI3LWQ4YTNkMGE5YWY2NyJ9.PtnA0kfG8rPNmXB0Bnm29igWCPiF3LJKXnnjgxFPdDB_VTqnbKd9i1f06ivXF5sCus--Tg_oX5NAxRNcPgPACg"
-TURSO_DATABASE_URL="libsql://database-bronze-candle-vercel-icfg-wx2ipotaofdg2hi24koqlabk.aws-ap-south-1.turso.io"
+DATABASE_URL="$(turso db show <db> --url)" \
+DATABASE_AUTH_TOKEN="$(turso db tokens create <db>)" \
 npm run db:seed
 ```
 

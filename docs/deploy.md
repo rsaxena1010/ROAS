@@ -1,11 +1,27 @@
 # Deploying to Vercel
 
-## The two things that will bite you
+## The three things that will bite you
 
 **1. Vercel builds your production branch.** By default that is `main`. If the app lives on a
 feature branch, the production deployment has nothing to build and Vercel serves its own
 platform-level `404: NOT_FOUND` (a styled page with a `Code:` and `ID:`, not the app's own 404).
 Either merge to `main` or set **Settings → Git → Production Branch** to the branch you want.
+
+**1b. Importing the repo before the app is on the production branch poisons the framework
+preset.** Vercel detects the framework once, at import. If `main` had no `package.json` at that
+moment, the preset is saved as **Other**, whose default output directory is `public` — so a
+later, otherwise-correct build ends with:
+
+```
+Error: No Output Directory named "public" found after the Build completed.
+```
+
+Nothing is wrong with the build; Vercel simply never ran the Next.js adapter. `vercel.json`
+pins `"framework": "nextjs"` so this is fixed in the repo rather than in dashboard state, but if
+the error persists, set **Settings → Build & Deployment → Framework Preset** to **Next.js**
+explicitly and leave Build Command and Output Directory on their defaults. Do not create a
+`public/` directory to satisfy the error — that hides the misconfiguration and still serves none
+of the app.
 
 **2. A `file:` database cannot work on Vercel.** `.data/roas.db` is gitignored, so it is not in
 the bundle; the function filesystem is read-only outside `/tmp`; and anything written there dies
@@ -65,8 +81,8 @@ npm run db:push
 ### 4. Seed it
 
 ```bash
-DATABASE_URL='libsql://roas-<org>.turso.io' \
-DATABASE_AUTH_TOKEN='<token>' \
+TURSO_AUTH_TOKEN="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODYyNjMwOTQsImlkIjoiMDE5ZmU1OTMtYzIwMS03YWJjLWIxZDYtNzY4NjlkZTFmOTdjIiwia2lkIjoiTmhQZHl0Z3AwN3RyUzZfVDlNOGtldmV4TVlqYUY0aWhSVTBYbFRtUWdZZyIsInJpZCI6IjEyOTEyYjZlLTQyYWEtNDhkZC04OTI3LWQ4YTNkMGE5YWY2NyJ9.PtnA0kfG8rPNmXB0Bnm29igWCPiF3LJKXnnjgxFPdDB_VTqnbKd9i1f06ivXF5sCus--Tg_oX5NAxRNcPgPACg"
+TURSO_DATABASE_URL="libsql://database-bronze-candle-vercel-icfg-wx2ipotaofdg2hi24koqlabk.aws-ap-south-1.turso.io"
 npm run db:seed
 ```
 
@@ -108,6 +124,11 @@ curl -s -o /dev/null -w '%{http_code}\n' https://<deployment>/login   # expect 2
 
 - **Platform `404: NOT_FOUND` with a `Code:`/`ID:`** — Vercel has no build output. Wrong
   production branch (see above) or a wrong **Root Directory** setting.
+- **`No Output Directory named "public" found`** — the Framework Preset is not Next.js. See 1b.
+  The build succeeded; the adapter never ran.
+- **`Failed to collect configuration for /<route>`** during build — something is touching the
+  database at module scope. `db` is a lazy proxy precisely so a build needs no credentials; if
+  this reappears, look for a new top-level query or a `db` call outside a request.
 - **500 on every route, `DATABASE_URL is "file:..."` in the function logs** — step 2 was
   skipped.
 - **500 mentioning `DATABASE_AUTH_TOKEN is not set`** — the URL is remote but the token is

@@ -25,10 +25,41 @@ const globalForDb = globalThis as unknown as {
   __roasDb?: ReturnType<typeof createDb>;
 };
 
+/**
+ * A local file is the right default for dev and the wrong answer in a serverless deployment:
+ * the bundle ships without `.data/` (it is gitignored), the function filesystem is read-only
+ * outside `/tmp`, and anything written there dies with the instance.
+ *
+ * Left alone, that surfaces as `EROFS: read-only file system, mkdir '/var/task/.data'` thrown
+ * from module scope on the first request — which reads like a build problem rather than a
+ * missing environment variable. Fail with the actual remedy instead.
+ */
+function assertDeployableUrl(url: string): void {
+  if (process.env.NODE_ENV !== "production") return;
+  if (!url.startsWith("file:") || url.startsWith("file::memory:")) return;
+
+  throw new Error(
+    `DATABASE_URL is "${url}", a local SQLite file, but NODE_ENV is production. ` +
+      "A serverless filesystem is read-only and ephemeral, so a file database cannot work there. " +
+      "Point DATABASE_URL at a hosted libSQL database (libsql://<db>.turso.io) and set " +
+      "DATABASE_AUTH_TOKEN. See docs/deploy.md.",
+  );
+}
+
 function createDb() {
   const url = resolveUrl();
+  assertDeployableUrl(url);
+
   if (url.startsWith("file:") && !url.startsWith("file::memory:")) {
     mkdirSync(dirname(url.slice("file:".length)), { recursive: true });
+  }
+  // Turso rejects unauthenticated connections; catch the omission here rather than as an
+  // opaque 401 from the first query.
+  if (url.startsWith("libsql://") && !process.env.DATABASE_AUTH_TOKEN) {
+    throw new Error(
+      `DATABASE_URL is a remote libSQL URL but DATABASE_AUTH_TOKEN is not set. ` +
+        "Add it to the deployment's environment variables. See docs/deploy.md.",
+    );
   }
   const client = createClient({
     url,

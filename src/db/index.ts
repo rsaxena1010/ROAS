@@ -18,11 +18,14 @@ import * as schema from "./schema";
  */
 
 function resolveUrl(): string {
-  return process.env.DATABASE_URL ?? "file:./.data/roas.db";
+  // An env var set to an empty string is a misconfiguration, not a choice — treat it as unset
+  // rather than handing `createClient` a blank URL.
+  const configured = process.env.DATABASE_URL?.trim();
+  return configured || "file:./.data/roas.db";
 }
 
 const globalForDb = globalThis as unknown as {
-  __roasDb?: ReturnType<typeof createDb>;
+  __roasDb?: DrizzleDb;
 };
 
 /**
@@ -85,10 +88,42 @@ function createDb() {
   return drizzle(client, { schema });
 }
 
+type DrizzleDb = ReturnType<typeof createDb>;
+
 // Next dev recompiles modules per request; without the cache we'd open a new connection
 // on every hot reload.
-export const db = globalForDb.__roasDb ?? createDb();
-if (process.env.NODE_ENV !== "production") globalForDb.__roasDb = db;
+function connection(): DrizzleDb {
+  const cached = globalForDb.__roasDb;
+  if (cached) return cached;
+  const created = createDb();
+  globalForDb.__roasDb = created;
+  return created;
+}
+
+/**
+ * Lazy on purpose.
+ *
+ * `next build` imports every page module to collect its configuration, so anything constructed
+ * at module scope runs during the build. When this was `const db = createDb()`, that made a
+ * *build* depend on runtime database credentials: on Vercel the deploy failed at "Collecting
+ * page data" with a connection-string error, which is the wrong place to learn about a missing
+ * environment variable. Nothing queries during the build — every route here is dynamic — so the
+ * client should not exist until something actually uses it.
+ *
+ * The proxy defers `createDb()` (and therefore both config checks) to first property access,
+ * which is the first real query. Methods are bound to the underlying instance rather than to
+ * the proxy so drizzle's internals see the object they expect.
+ */
+export const db: DrizzleDb = new Proxy({} as DrizzleDb, {
+  get(_target, property) {
+    const real = connection() as unknown as Record<string | symbol, unknown>;
+    const value = real[property];
+    return typeof value === "function" ? value.bind(real) : value;
+  },
+  has(_target, property) {
+    return property in (connection() as unknown as object);
+  },
+});
 
 export { schema };
-export type Db = typeof db;
+export type Db = DrizzleDb;

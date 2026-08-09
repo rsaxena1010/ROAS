@@ -26,8 +26,24 @@ const globalForDb = globalThis as unknown as {
 };
 
 /**
- * A local file is the right default for dev and the wrong answer in a serverless deployment:
- * the bundle ships without `.data/` (it is gitignored), the function filesystem is read-only
+ * Are we running on a serverless host, as opposed to merely building for production?
+ *
+ * This is deliberately NOT `NODE_ENV === "production"`: `next build` sets that locally, and
+ * building a production bundle against the local file database is entirely legitimate. Gating
+ * on the host means a local `npm run build` still works while a real deployment fails fast —
+ * on Vercel these variables are present during the build too, so the failure lands in the
+ * build log rather than in front of a user.
+ */
+function serverlessHost(): string | null {
+  if (process.env.VERCEL) return "Vercel";
+  if (process.env.NETLIFY) return "Netlify";
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) return "AWS Lambda";
+  return null;
+}
+
+/**
+ * A local file is the right default for dev and the wrong answer on a serverless host: the
+ * bundle ships without `.data/` (it is gitignored), the function filesystem is read-only
  * outside `/tmp`, and anything written there dies with the instance.
  *
  * Left alone, that surfaces as `EROFS: read-only file system, mkdir '/var/task/.data'` thrown
@@ -35,11 +51,12 @@ const globalForDb = globalThis as unknown as {
  * missing environment variable. Fail with the actual remedy instead.
  */
 function assertDeployableUrl(url: string): void {
-  if (process.env.NODE_ENV !== "production") return;
+  const host = serverlessHost();
+  if (!host) return;
   if (!url.startsWith("file:") || url.startsWith("file::memory:")) return;
 
   throw new Error(
-    `DATABASE_URL is "${url}", a local SQLite file, but NODE_ENV is production. ` +
+    `DATABASE_URL is "${url}", a local SQLite file, but this is running on ${host}. ` +
       "A serverless filesystem is read-only and ephemeral, so a file database cannot work there. " +
       "Point DATABASE_URL at a hosted libSQL database (libsql://<db>.turso.io) and set " +
       "DATABASE_AUTH_TOKEN. See docs/deploy.md.",
